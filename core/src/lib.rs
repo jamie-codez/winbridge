@@ -15,6 +15,7 @@ pub mod mapping;
 pub mod paths;
 pub mod sdl;
 pub mod setup;
+pub mod shortcuts;
 
 pub use config::{Game, GamescopeConfig, Library};
 pub use doctor::{run_checks, Check, Status};
