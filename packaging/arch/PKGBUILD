@@ -1,0 +1,36 @@
+# Maintainer: jamie-codez <jamie-codez@users.noreply.github.com>
+# Arch Linux / pacman package. Build with: makepkg -si
+# (CI sets _src to a local tarball; for the AUR the GitHub tag tarball below is used.)
+pkgname=winbridge
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Run Windows games on Linux, the easy way (umu-launcher + Proton launcher with controller support)'
+arch=('x86_64')
+url='https://github.com/jamie-codez/winbridge'
+license=('MIT')
+depends=('python' 'curl' 'vulkan-icd-loader' 'xdg-desktop-portal' 'libxkbcommon' 'wayland')
+makedepends=('cargo')
+optdepends=('umu-launcher: the game engine launcher (WinBridge installs it on first start if missing)'
+            'gamemode: CPU performance boost while playing'
+            'mangohud: in-game FPS overlay'
+            'gamescope: frame pacing and scaling'
+            'game-devices-udev: controller access rules')
+source=("${_src:-$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz}")
+# 'SKIP' only in this repository copy: CI replaces it with the checksum of the tarball it builds.
+# Before publishing to the AUR run `updpkgsums` so users verify the release archive.
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/$pkgname-$pkgver"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+  install -Dm755 "$srcdir/target/release/winbridge"     "$pkgdir/usr/bin/winbridge"
+  install -Dm755 "$srcdir/target/release/winbridge-gui" "$pkgdir/usr/bin/winbridge-gui"
+  install -Dm644 packaging/winbridge.desktop "$pkgdir/usr/share/applications/winbridge.desktop"
+  install -Dm644 packaging/winbridge.svg     "$pkgdir/usr/share/icons/hicolor/scalable/apps/winbridge.svg"
+  install -Dm644 README.md                   "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 LICENSE                     "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=WinBridge
+GenericName=Windows game launcher
+Comment=Run Windows games on Linux, the easy way
+Exec=winbridge-gui %f
+Icon=winbridge
+Terminal=false
+Categories=Game;Emulator;
+Keywords=windows;games;wine;proton;controller;
+MimeType=application/vnd.microsoft.portable-executable;application/x-ms-dos-executable;application/x-msdownload;
+StartupWMClass=winbridge-gui

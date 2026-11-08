@@ -1,0 +1,88 @@
+name: Release
+
+# Branch model:  feature branches --PR--> main --promote--> dev --promote--> prod
+#   main  the default branch and source of truth. Nothing is released from here.
+#   dev   every push publishes a PRE-RELEASE (v0.2.0-dev.1, v0.2.0-dev.2, ...)
+#   prod  every push publishes a STABLE release (v0.2.0)
+# semantic-release reads the Conventional Commits, picks the version, tags it and creates the GitHub
+# release with notes. Then every package format is built for that tag and attached.
+# Promotions (main -> dev, dev -> prod) must use "Create a merge commit", never squash.
+
+on:
+  push:
+    branches: [dev, prod]
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  semantic:
+    name: Version and tag
+    # Releases happen ONLY from dev (pre-release) and prod (stable), never from any other branch.
+    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/prod'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Refuse to release from any other branch
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          case "$BRANCH" in
+            dev|prod) echo "Releasing from $BRANCH" ;;
+            *) echo "::error::Releases are only allowed from dev and prod, not from $BRANCH"; exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: semantic-release
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          npx --yes
+          -p semantic-release@24
+          -p @semantic-release/exec@6
+          -p conventional-changelog-conventionalcommits@8
+          semantic-release
+
+  package:
+    name: Build release packages
+    needs: semantic
+    if: needs.semantic.outputs.version != ''
+    uses: ./.github/workflows/package.yml
+    with:
+      ref: v${{ needs.semantic.outputs.version }}
+      version: ${{ needs.semantic.outputs.version }}
+
+  publish:
+    name: Attach packages to the release
+    needs: [semantic, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.semantic.outputs.version }}
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "v$VERSION" * --clobber --repo "$GITHUB_REPOSITORY"
