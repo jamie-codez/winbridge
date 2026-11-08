@@ -174,13 +174,14 @@ impl Library {
     /// Remove the game entry. The prefix (saves!) is only deleted on request.
     pub fn remove(&self, id: &str, delete_prefix: bool) -> Result<()> {
         let game = self.get(id)?;
-        fs::remove_file(self.file(id))?;
+        // Delete the data first: if that fails the entry is still there, so the user can retry.
         if delete_prefix {
             let prefix = game.prefix(&self.paths);
             if prefix.starts_with(self.paths.prefixes_dir()) && prefix.exists() {
-                fs::remove_dir_all(prefix)?;
+                fs::remove_dir_all(&prefix).with_context(|| format!("could not delete {}", prefix.display()))?;
             }
         }
+        fs::remove_file(self.file(id))?;
         Ok(())
     }
 }
@@ -229,6 +230,30 @@ mod tests {
         lib.add(Game::new("Ok", exe)).unwrap();
         fs::write(lib.paths.games_dir().join("bad.toml"), "not = [valid").unwrap();
         assert_eq!(lib.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn failed_data_deletion_keeps_the_entry_so_it_can_be_retried() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, lib) = lib();
+        let exe = dir.path().join("a.exe");
+        fs::write(&exe, b"MZ").unwrap();
+        let game = lib.add(Game::new("Hades", exe)).unwrap();
+        // A prefix with a folder we are not allowed to empty.
+        let locked = game.prefix(&lib.paths).join("saves");
+        fs::create_dir_all(&locked).unwrap();
+        fs::write(locked.join("slot1.sav"), b"x").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = lib.remove(&game.id, true);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap(); // let the temp dir clean up
+        if fs::write(locked.join("probe"), b"").is_ok() {
+            // Running as root: permissions don't stop deletion, so this scenario can't be staged.
+            return;
+        }
+        assert!(result.is_err());
+        assert!(lib.get(&game.id).is_ok(), "the library entry vanished although its data is still there");
+        assert!(lib.remove(&game.id, true).is_ok(), "retrying after fixing permissions must work");
     }
 
     #[test]
