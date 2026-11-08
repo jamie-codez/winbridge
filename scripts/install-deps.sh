@@ -176,9 +176,46 @@ fetch_verified() { # stdin = release_assets output
   say "Checksums verified."
 }
 
+# Run a helper script with administrator rights (root, sudo in a terminal, or a pkexec dialog).
+run_priv() { # $1 = path of a sh script
+  if [ "$(id -u)" -eq 0 ]; then
+    sh "$1"
+  elif [ -t 0 ] && command -v sudo >/dev/null 2>&1; then
+    say "Asking for your password (sudo) to install the packages."
+    sudo sh "$1"
+  elif command -v pkexec >/dev/null 2>&1; then
+    say "Asking for your password in a system dialog to install the packages."
+    pkexec sh "$1"
+  else
+    fail "need root to install. Run this script from a terminal with sudo available."
+  fi
+}
+
+# The download step needs curl and python3. On a minimal system install just those first, so
+# first-run setup can provision its own bootstrap tools (this can mean a second password prompt).
+ensure_download_tools() {
+  local missing=() pypkg=python3 h="$tmp/tools.sh"
+  [ "$PM" = pacman ] && pypkg=python
+  command -v curl >/dev/null 2>&1    || missing+=(curl)
+  command -v python3 >/dev/null 2>&1 || missing+=("$pypkg")
+  [ ${#missing[@]} -eq 0 ] && return 0
+  say "Installing ${missing[*]} first (needed to fetch the game engine launcher)."
+  {
+    echo 'set -e'
+    case "$PM" in
+      apt) echo 'export DEBIAN_FRONTEND=noninteractive'; echo 'apt-get update || true'; printf 'apt-get install -y' ;;
+      dnf) printf 'dnf install -y' ;;
+      pacman) printf 'pacman -S --needed --noconfirm' ;;
+    esac
+    printf ' %q' "${missing[@]}"; echo
+  } > "$h"
+  chmod 644 "$h"
+  run_priv "$h"
+  command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 || fail "could not install curl and python3"
+}
+
 if [ "$UMU_MISSING" -eq 1 ] && [ "$EXTRAS_ONLY" -eq 0 ]; then
-  command -v curl >/dev/null 2>&1    || fail "curl is required first (install it with your package manager)"
-  command -v python3 >/dev/null 2>&1 || fail "python3 is required first (install it with your package manager)"
+  ensure_download_tools
   fetch_meta() { meta="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/tags/$UMU_VERSION")" || fail "could not reach GitHub. Check your internet connection."; }
   case "$PM" in
     apt)
@@ -191,7 +228,7 @@ if [ "$UMU_MISSING" -eq 1 ] && [ "$EXTRAS_ONLY" -eq 0 ]; then
       fetch_meta
       wanted="$(release_assets "python3-umu-launcher_,umu-launcher_" "_${arch}_${suffix}.deb" "_all_${suffix}.deb")"
       if [ "$(printf '%s\n' "$wanted" | grep -c .)" -eq 2 ]; then
-        printf '%s\n' "$wanted" | fetch_verified
+        fetch_verified <<< "$wanted"   # here-string, NOT a pipeline: a pipeline would run it in a subshell and lose UMU_FILES
       else
         UMU_WARN="No umu-launcher $UMU_VERSION package exists for '$suffix'/$arch. Get it from https://github.com/$REPO/releases"
       fi ;;
@@ -203,7 +240,7 @@ if [ "$UMU_MISSING" -eq 1 ] && [ "$EXTRAS_ONLY" -eq 0 ]; then
         fetch_meta
         wanted="$(release_assets "umu-launcher-" ".fc${VERSION_ID:-0}.$(uname -m).rpm")"
         if [ "$(printf '%s\n' "$wanted" | grep -c .)" -ge 1 ]; then
-          printf '%s\n' "$wanted" | fetch_verified
+          fetch_verified <<< "$wanted"   # here-string, NOT a pipeline: a pipeline would run it in a subshell and lose UMU_FILES
         else
           UMU_WARN="umu-launcher isn't available for ${PRETTY_NAME:-your system}. Get it from https://github.com/$REPO/releases"
         fi
@@ -260,17 +297,7 @@ helper="$tmp/helper.sh"
 } > "$helper"
 chmod 644 "$helper"
 
-if [ "$(id -u)" -eq 0 ]; then
-  sh "$helper"
-elif [ -t 0 ] && command -v sudo >/dev/null 2>&1; then
-  say "Asking for your password (sudo) to install the packages."
-  sudo sh "$helper"
-elif command -v pkexec >/dev/null 2>&1; then
-  say "Asking for your password in a system dialog to install the packages."
-  pkexec sh "$helper"
-else
-  fail "need root to install. Run this script from a terminal with sudo available."
-fi
+run_priv "$helper"
 
 UMU_STILL_MISSING=0
 if [ "$EXTRAS_ONLY" -eq 0 ] && ! command -v umu-run >/dev/null 2>&1; then
