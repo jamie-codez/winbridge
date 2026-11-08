@@ -103,6 +103,10 @@ fn first_existing(paths: &[&str]) -> Option<String> {
     paths.iter().find(|p| Path::new(p).exists()).map(|p| p.to_string())
 }
 
+/// The right fix for missing graphics support on any supported distribution: the setup knows the
+/// package names for apt, dnf and pacman, so we point at it instead of hard-coding one manager.
+const SETUP_FIX: &str = "Press “Install everything” in WinBridge, or run in a terminal: winbridge setup";
+
 fn check_vulkan() -> Check {
     let lib = first_existing(&[
         "/usr/lib/x86_64-linux-gnu/libvulkan.so.1",
@@ -122,7 +126,7 @@ fn check_vulkan() -> Check {
             "Graphics driver (Vulkan)",
             Status::Fail,
             "Vulkan graphics support is missing. Windows games are translated to Vulkan to run on Linux.",
-            Some("sudo apt install mesa-vulkan-drivers libvulkan1 vulkan-tools"),
+            Some(SETUP_FIX),
         ),
     }
 }
@@ -135,7 +139,7 @@ fn check_vulkan32() -> Check {
             "32-bit graphics support",
             Status::Warn,
             "Missing. Newer 64-bit games are fine, but older 32-bit games may not start.",
-            Some("sudo dpkg --add-architecture i386 && sudo apt update && sudo apt install libvulkan1:i386 mesa-vulkan-drivers:i386"),
+            Some(SETUP_FIX),
         ),
     }
 }
@@ -276,6 +280,14 @@ fn check_disk(dir: &Path) -> Check {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graphics_fix_is_not_tied_to_one_package_manager() {
+        for word in ["apt", "dpkg", "dnf", "pacman"] {
+            assert!(!SETUP_FIX.contains(word), "the fix would be wrong on other distributions: {SETUP_FIX}");
+        }
+        assert!(SETUP_FIX.contains("winbridge setup"));
+    }
 
     #[test]
     fn apt_candidate_parsing() {
