@@ -20,7 +20,7 @@ jobs:
     name: Format, lint, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install stable Rust
         run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable
       - uses: Swatinem/rust-cache@v2
@@ -34,7 +34,7 @@ jobs:
     name: Conventional Commits
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: PR title
@@ -78,7 +78,7 @@ jobs:
           elif command -v dnf >/dev/null; then dnf install -y curl python3 which
           elif command -v pacman >/dev/null; then pacman -Sy --noconfirm curl python which
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Show what setup would do (changes nothing)
         run: bash scripts/install-deps.sh --list
       - name: Check mode gives a definite answer

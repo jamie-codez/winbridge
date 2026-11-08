@@ -23,7 +23,7 @@ jobs:
     name: .deb (Debian, Ubuntu and derivatives)
     runs-on: ubuntu-22.04 # oldest glibc we support, so the binary runs on newer systems too
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
       - run: rustup toolchain install stable --profile minimal && rustup default stable
@@ -40,7 +40,7 @@ jobs:
     name: Portable tarball (any Linux)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
       - run: rustup toolchain install stable --profile minimal && rustup default stable
@@ -58,7 +58,7 @@ jobs:
     container: fedora:latest
     steps:
       - run: dnf install -y git rust cargo gcc rpm-build tar gzip
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
       - name: Build
@@ -79,7 +79,7 @@ jobs:
     container: archlinux:latest
     steps:
       - run: pacman -Syu --noconfirm base-devel rust git sudo
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
       - name: Build with makepkg
