@@ -1,5 +1,8 @@
 {
-  "branches": ["main"],
+  "branches": [
+    "prod",
+    { "name": "dev", "prerelease": "dev", "channel": "dev" }
+  ],
   "tagFormat": "v${version}",
   "plugins": [
     ["@semantic-release/commit-analyzer", {
@@ -30,14 +33,8 @@
         ]
       }
     }],
-    ["@semantic-release/changelog", { "changelogFile": "CHANGELOG.md", "changelogTitle": "# Changelog" }],
     ["@semantic-release/exec", {
-      "prepareCmd": "./scripts/set-version.sh ${nextRelease.version}",
       "successCmd": "echo \"version=${nextRelease.version}\" >> \"$GITHUB_OUTPUT\""
-    }],
-    ["@semantic-release/git", {
-      "assets": ["Cargo.toml", "Cargo.lock", "CHANGELOG.md"],
-      "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
     }],
     "@semantic-release/github"
   ]

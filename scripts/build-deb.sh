@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 
 VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -1)"
 ARCH="$(dpkg --print-architecture)"
+DEB_VERSION="${VERSION/-/~}"   # 0.2.0-dev.1 -> 0.2.0~dev.1 so a pre-release sorts before the stable release
 NAME="winbridge_${VERSION}_${ARCH}"
 PKG="dist/$NAME"
 
@@ -33,7 +34,7 @@ SIZE_KB="$(du -sk "$PKG/usr" | cut -f1)"
 mkdir -p "$PKG/DEBIAN"
 cat > "$PKG/DEBIAN/control" <<CONTROL
 Package: winbridge
-Version: ${VERSION}
+Version: ${DEB_VERSION}
 Section: games
 Priority: optional
 Architecture: ${ARCH}

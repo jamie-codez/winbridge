@@ -11,6 +11,11 @@ on:
         description: Git ref (tag or commit) to build
         type: string
         required: true
+      version:
+        description: Release version to stamp into the packages (empty = keep the version in Cargo.toml)
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -28,6 +33,11 @@ jobs:
           ref: ${{ inputs.ref }}
       - run: rustup toolchain install stable --profile minimal && rustup default stable
       - uses: Swatinem/rust-cache@v2
+      - name: Stamp release version
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: ./scripts/set-version.sh "$VERSION"
       - run: sudo apt-get update && sudo apt-get install -y fakeroot
       - run: ./scripts/build-deb.sh
       - uses: actions/upload-artifact@v4
@@ -45,6 +55,11 @@ jobs:
           ref: ${{ inputs.ref }}
       - run: rustup toolchain install stable --profile minimal && rustup default stable
       - uses: Swatinem/rust-cache@v2
+      - name: Stamp release version
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: ./scripts/set-version.sh "$VERSION"
       - run: ./scripts/build-tarball.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -57,16 +72,22 @@ jobs:
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
-      - run: dnf install -y git rust cargo gcc rpm-build tar gzip
+      - run: dnf install -y git rust cargo gcc rpm-build tar gzip python3
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+      - name: Stamp release version
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: ./scripts/set-version.sh "$VERSION"
       - name: Build
         run: |
           VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -1)"
+          RPM_VERSION="${VERSION/-/\~}"   # 0.2.0-dev.1 -> 0.2.0~dev.1 (sorts before 0.2.0)
           cargo build --release --workspace
           rpmbuild -bb packaging/winbridge.spec \
-            --define "pkgver $VERSION" --define "srcdir $PWD" --define "_topdir $PWD/dist/rpmbuild"
+            --define "pkgver $RPM_VERSION" --define "srcdir $PWD" --define "_topdir $PWD/dist/rpmbuild"
       - uses: actions/upload-artifact@v4
         with:
           name: rpm
@@ -78,24 +99,33 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
-      - run: pacman -Syu --noconfirm base-devel rust git sudo
+      - run: pacman -Syu --noconfirm base-devel rust git sudo python
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+      - name: Stamp release version
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config --global --add safe.directory "$PWD"
+          ./scripts/set-version.sh "$VERSION"
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qam "ci: stamp release version"   # so git archive includes it
       - name: Build with makepkg
         run: |
           VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -1)"
+          PKGVER="${VERSION//-/_}"   # pacman versions can't contain '-'
           git config --global --add safe.directory "$PWD"
           mkdir -p /tmp/build
-          git archive --prefix="winbridge-$VERSION/" -o "/tmp/build/winbridge-$VERSION.tar.gz" HEAD
+          git archive --prefix="winbridge-$PKGVER/" -o "/tmp/build/winbridge-$PKGVER.tar.gz" HEAD
           cp packaging/arch/PKGBUILD /tmp/build/PKGBUILD
-          sed -i "s/^pkgver=.*/pkgver=$VERSION/" /tmp/build/PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=$PKGVER/" /tmp/build/PKGBUILD
           useradd -m builder
           chown -R builder /tmp/build
           cd /tmp/build
           # --nodeps: the package's *runtime* dependencies are only metadata here; the container has
           # just the build tools (cargo). The next step proves they resolve by installing the package.
-          sudo -u builder env "_src=winbridge-$VERSION.tar.gz" makepkg -f --noconfirm --nodeps
+          sudo -u builder env "_src=winbridge-$PKGVER.tar.gz" makepkg -f --noconfirm --nodeps
           mkdir -p "$GITHUB_WORKSPACE/dist"
           cp /tmp/build/*.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
       - name: Install the package on a clean Arch system and run it

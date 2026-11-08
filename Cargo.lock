@@ -4176,7 +4176,7 @@ dependencies = [
 
 [[package]]
 name = "winbridge-cli"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4185,7 +4185,7 @@ dependencies = [
 
 [[package]]
 name = "winbridge-core"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -4199,7 +4199,7 @@ dependencies = [
 
 [[package]]
 name = "winbridge-gui"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "eframe",

@@ -1,16 +1,19 @@
 name: Release
 
-# Semantic releases. Every push to main is analysed with semantic-release:
-#   feat: -> minor   fix:/perf: -> patch   (a "!" or "BREAKING CHANGE:" -> minor while we're on 0.x)
-# If there is something to release it bumps the version, updates CHANGELOG.md, tags vX.Y.Z,
-# creates the GitHub release with notes, builds every package for that tag and attaches them.
+# Branch model:  feature branches --PR--> main --promote--> dev --promote--> prod
+#   main  the default branch and source of truth. Nothing is released from here.
+#   dev   every push publishes a PRE-RELEASE (v0.2.0-dev.1, v0.2.0-dev.2, ...)
+#   prod  every push publishes a STABLE release (v0.2.0)
+# semantic-release reads the Conventional Commits, picks the version, tags it and creates the GitHub
+# release with notes. Then every package format is built for that tag and attached.
+# Promotions (main -> dev, dev -> prod) must use "Create a merge commit", never squash.
 
 on:
   push:
-    branches: [main]
+    branches: [dev, prod]
 
 concurrency:
-  group: release
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -18,7 +21,7 @@ permissions:
 
 jobs:
   semantic:
-    name: Version, changelog and tag
+    name: Version and tag
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -33,8 +36,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install stable Rust (used to refresh Cargo.lock)
-        run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: semantic-release
         id: release
         env:
@@ -42,8 +43,6 @@ jobs:
         run: >
           npx --yes
           -p semantic-release@24
-          -p @semantic-release/changelog@6
-          -p @semantic-release/git@10
           -p @semantic-release/exec@6
           -p conventional-changelog-conventionalcommits@8
           semantic-release
@@ -55,6 +54,7 @@ jobs:
     uses: ./.github/workflows/package.yml
     with:
       ref: v${{ needs.semantic.outputs.version }}
+      version: ${{ needs.semantic.outputs.version }}
 
   publish:
     name: Attach packages to the release
