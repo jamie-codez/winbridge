@@ -1,0 +1,41 @@
+name: Game report
+description: Tell us whether a game works (or doesn't) with WinBridge
+title: "docs: game report - "
+labels: [game-report]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before reporting, check the game on [ProtonDB](https://www.protondb.com). Games with kernel-level
+        anti-cheat (for example online *Call of Duty* or *EA Sports FC*) cannot run on Linux.
+  - type: input
+    id: game
+    attributes:
+      label: Game and where you bought it
+      placeholder: Hades (Steam)
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options: [Works perfectly, Works with minor problems, Starts but unplayable, Does not start]
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution, GPU and driver
+      placeholder: Ubuntu 24.04, Intel UHD, Mesa 25.2
+    validations:
+      required: true
+  - type: input
+    id: controller
+    attributes:
+      label: Controller used (if any)
+      placeholder: DualSense over Bluetooth
+  - type: textarea
+    id: details
+    attributes:
+      label: Details, settings you changed, and the launch log
+      render: text
