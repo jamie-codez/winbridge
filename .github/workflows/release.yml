@@ -22,6 +22,8 @@ permissions:
 jobs:
   semantic:
     name: Version and tag
+    # Releases happen ONLY from dev (pre-release) and prod (stable), never from any other branch.
+    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/prod'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -30,6 +32,14 @@ jobs:
     outputs:
       version: ${{ steps.release.outputs.version }}
     steps:
+      - name: Refuse to release from any other branch
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          case "$BRANCH" in
+            dev|prod) echo "Releasing from $BRANCH" ;;
+            *) echo "::error::Releases are only allowed from dev and prod, not from $BRANCH"; exit 1 ;;
+          esac
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

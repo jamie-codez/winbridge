@@ -29,6 +29,10 @@ jobs:
       - run: cargo test --workspace
       - name: Shell scripts parse
         run: for f in scripts/*.sh .githooks/commit-msg; do bash -n "$f"; done
+      - name: Installer behaviour on fake apt, dnf and pacman systems
+        run: ./scripts/test-install-deps.sh
+      - name: Release policy (only dev and prod may release)
+        run: ./scripts/check-release-config.sh
 
   commits:
     name: Conventional Commits

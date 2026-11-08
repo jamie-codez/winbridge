@@ -20,6 +20,12 @@ feat/* fix/* docs/* ci/* …  ──PR, squash──▶  main   default branch, 
 | `dev` | testers' channel | publishes a **pre-release** with all four packages |
 | `prod` | what everyone should install | publishes a **stable release** with all four packages |
 
+> **Strict rule: releases happen only from `dev` (pre-release) and `prod` (stable), never from any other
+> branch.** This is enforced three ways: the Release workflow triggers only on pushes to those two
+> branches and re-checks the branch name itself; semantic-release is configured for exactly those two
+> branches; and CI runs `scripts/check-release-config.sh` on every change, which fails if anything
+> (a new trigger, another workflow, a changed branch list) would allow a release from elsewhere.
+
 ## Day to day
 
 1. Branch from `main`: `git switch -c fix/centre-sticks`.
