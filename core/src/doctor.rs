@@ -35,14 +35,9 @@ pub fn run_checks(paths: &Paths) -> Vec<Check> {
         check_vulkan32(),
         check_map_count(),
         check_ntsync(),
-        check_optional("GameMode", "gamemoded", "Boosts CPU speed while you play.", "sudo apt install gamemode"),
-        check_optional(
-            "Gamescope",
-            "gamescope",
-            "Helps with smooth frame pacing and scaling.",
-            "sudo apt install gamescope",
-        ),
-        check_optional("MangoHud", "mangohud", "Shows an FPS counter on screen.", "sudo apt install mangohud"),
+        check_optional("GameMode", "gamemoded", "gamemode", "Boosts CPU speed while you play."),
+        check_optional("Gamescope", "gamescope", "gamescope", "Helps with smooth frame pacing and scaling."),
+        check_optional("MangoHud", "mangohud", "mangohud", "Shows an FPS counter on screen."),
         check_controllers(),
         check_disk(&paths.data),
     ]
@@ -172,11 +167,60 @@ fn check_ntsync() -> Check {
     }
 }
 
-fn check_optional(title: &'static str, bin: &str, why: &str, fix: &str) -> Check {
+/// The system's package manager, if we know how to talk to it.
+fn package_manager() -> Option<&'static str> {
+    ["apt-get", "dnf", "pacman"].into_iter().find(|c| which(c).is_some())
+}
+
+/// Does `apt-cache policy` output show an installable candidate version?
+fn candidate_available(policy: &str) -> bool {
+    policy
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Candidate:"))
+        .map(|c| {
+            let c = c.trim();
+            !c.is_empty() && c != "(none)"
+        })
+        .unwrap_or(false)
+}
+
+/// Can `pkg` really be installed from this distribution's software sources? Only apt can tell us
+/// cheaply; for the others we assume yes.
+fn installable(pm: &str, pkg: &str) -> bool {
+    match pm {
+        "apt-get" => Command::new("apt-cache")
+            .args(["policy", pkg])
+            .output()
+            .map(|o| candidate_available(&String::from_utf8_lossy(&o.stdout)))
+            .unwrap_or(true),
+        _ => true,
+    }
+}
+
+fn install_command(pm: &str, pkg: &str) -> String {
+    match pm {
+        "apt-get" => format!("sudo apt install {pkg}"),
+        "dnf" => format!("sudo dnf install {pkg}"),
+        _ => format!("sudo pacman -S {pkg}"),
+    }
+}
+
+/// An optional extra. We only suggest an install command when the distribution actually offers
+/// the package, so people are never told to run something that can't work.
+fn check_optional(title: &'static str, bin: &str, pkg: &str, why: &str) -> Check {
     if which(bin).is_some() {
-        check(title, Status::Ok, format!("Installed. {why}"), None)
-    } else {
-        check(title, Status::Info, format!("Optional, not installed. {why}"), Some(fix))
+        return check(title, Status::Ok, format!("Installed. {why}"), None);
+    }
+    match package_manager() {
+        Some(pm) if installable(pm, pkg) => {
+            check(title, Status::Info, format!("Optional, not installed. {why}"), Some(&install_command(pm, pkg)))
+        }
+        _ => check(
+            title,
+            Status::Info,
+            format!("Optional. Not available from your system's software sources, so it can't be installed from here. {why} Games run fine without it."),
+            None,
+        ),
     }
 }
 
@@ -226,5 +270,41 @@ fn check_disk(dir: &Path) -> Check {
         }
         Some(g) => check("Disk space", Status::Ok, format!("{g} GB free."), None),
         None => check("Disk space", Status::Info, "Couldn't measure free space.", None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apt_candidate_parsing() {
+        assert!(!candidate_available("gamescope:\n  Installed: (none)\n  Candidate: (none)\n"));
+        assert!(candidate_available("mangohud:\n  Installed: (none)\n  Candidate: 0.6.9.1-2build1\n"));
+        assert!(!candidate_available(""));
+    }
+
+    #[test]
+    fn explanations_never_contain_commands() {
+        // Regression: arguments to check_optional were once mixed up, putting a command into the message.
+        let c = check_optional(
+            "X",
+            "definitely-not-a-real-binary-xyz",
+            "definitely-not-a-real-package-xyz",
+            "Does things.",
+        );
+        assert!(!c.message.contains("sudo"), "{}", c.message);
+        if let Some(fix) = &c.fix {
+            assert!(fix.starts_with("sudo ") && fix.ends_with("definitely-not-a-real-package-xyz"), "{fix}");
+        } else {
+            assert!(c.message.contains("can't be installed from here"), "{}", c.message);
+        }
+    }
+
+    #[test]
+    fn install_commands_match_the_package_manager() {
+        assert_eq!(install_command("apt-get", "x"), "sudo apt install x");
+        assert_eq!(install_command("dnf", "x"), "sudo dnf install x");
+        assert_eq!(install_command("pacman", "x"), "sudo pacman -S x");
     }
 }
