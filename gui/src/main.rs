@@ -121,6 +121,8 @@ struct App {
     need_recheck: bool,
     live: Option<Live>,
     mapping: Option<MapSession>,
+    /// Text being typed in each game's advanced fields: (Steam id, Proton version).
+    drafts: std::collections::HashMap<String, (String, String)>,
     tx: Sender<Event>,
     rx: Receiver<Event>,
 }
@@ -178,6 +180,7 @@ impl App {
             need_recheck: false,
             live: None,
             mapping: None,
+            drafts: Default::default(),
             tx,
             rx,
         };
@@ -367,6 +370,7 @@ impl App {
                 self.games = self.lib.list().unwrap_or_default();
             }
             Action::Remove(id) => {
+                self.drafts.remove(&id);
                 match self.lib.remove(&id, false) {
                     Ok(()) => {
                         self.say("Removed. Save files were kept on disk in case you add the game back.", false, None)
@@ -704,18 +708,28 @@ impl App {
 
                     ui.collapsing("Advanced", |ui| {
                         ui.label(RichText::new("Steam game ID: applies known fixes for that game (find it in the game's Steam store URL). Leave empty if unsure.").color(MUTED).size(12.0));
-                        let mut sid = edited.game_id.strip_prefix("umu-").filter(|s| *s != "0").unwrap_or("").to_string();
-                        if ui.text_edit_singleline(&mut sid).lost_focus() {
-                            let digits: String = sid.chars().filter(char::is_ascii_digit).collect();
-                            edited.game_id = format!("umu-{}", if digits.is_empty() { "0" } else { &digits });
+                        // Typed text lives in a per-game draft; rebuilding it from the saved value on every
+                        // frame would throw away each keystroke before the field loses focus and saves.
+                        let (mut sid, mut p) = self.drafts.get(&g.id).cloned().unwrap_or_else(|| {
+                            (
+                                g.game_id.strip_prefix("umu-").filter(|s| *s != "0").unwrap_or("").to_string(),
+                                g.proton.clone().unwrap_or_default(),
+                            )
+                        });
+                        let sid_response = ui.text_edit_singleline(&mut sid);
+                        if sid_response.lost_focus() {
+                            sid.retain(|c| c.is_ascii_digit());
+                            edited.game_id = format!("umu-{}", if sid.is_empty() { "0" } else { &sid });
                             changed = true;
                         }
                         ui.label(RichText::new("Compatibility version. Leave empty for the recommended one; set it once a game works to keep it from changing.").color(MUTED).size(12.0));
-                        let mut p = edited.proton.clone().unwrap_or_default();
-                        if ui.text_edit_singleline(&mut p).lost_focus() {
-                            edited.proton = (!p.trim().is_empty()).then(|| p.trim().to_string());
+                        let proton_response = ui.text_edit_singleline(&mut p);
+                        if proton_response.lost_focus() {
+                            p = p.trim().to_string();
+                            edited.proton = (!p.is_empty()).then(|| p.clone());
                             changed = true;
                         }
+                        self.drafts.insert(g.id.clone(), (sid, p));
                     });
 
                     ui.add_space(4.0);
