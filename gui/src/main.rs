@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::mpsc::{channel, Receiver, Sender},
     sync::{
@@ -43,6 +43,7 @@ enum Event {
     Picked(PathBuf),
     SetupDone(Result<(), String>),
     SetupChecked(SetupState),
+    Started { id: String, pid: u32 },
     Exited { id: String, name: String, success: bool, seconds: u64, log: PathBuf },
     LaunchFailed(String),
 }
@@ -52,6 +53,7 @@ enum Action {
     Remove(String),
     Save(Game),
     Find(String),
+    Stop(String),
     UseExe(String, PathBuf),
 }
 
@@ -111,7 +113,10 @@ struct App {
     last_pad_scan: Instant,
     tools: HashSet<String>,
     page: Page,
-    running: HashSet<String>,
+    /// Games that are running now: process id (once known) and when they started.
+    running: HashMap<String, (Option<u32>, Instant)>,
+    /// Games the user pressed Stop on, so the exit isn't reported as a crash.
+    stopped: HashSet<String>,
     notice: Option<Notice>,
     confirm_remove: Option<String>,
     finder: Option<(String, Vec<PathBuf>)>,
@@ -170,7 +175,8 @@ impl App {
             last_pad_scan: Instant::now(),
             tools: HashSet::new(),
             page: Page::Library,
-            running: HashSet::new(),
+            running: HashMap::new(),
+            stopped: HashSet::new(),
             notice: None,
             confirm_remove: None,
             finder: None,
@@ -286,14 +292,18 @@ impl App {
             }
         };
         let (tx, ctx, paths) = (self.tx.clone(), ctx.clone(), self.lib.paths.clone());
-        self.running.insert(game.id.clone());
+        self.running.insert(game.id.clone(), (None, Instant::now()));
         self.say(
             format!("Starting {}… the first launch can take a minute while the game engine sets up.", game.name),
             false,
             None,
         );
         std::thread::spawn(move || {
-            match launch::spawn(&game, &paths, &plan).and_then(|r| r.wait()) {
+            let started = launch::spawn(&game, &paths, &plan).inspect(|r| {
+                let _ = tx.send(Event::Started { id: game.id.clone(), pid: r.pid() });
+                ctx.request_repaint();
+            });
+            match started.and_then(|r| r.wait()) {
                 Ok((info, log)) => {
                     let _ = tx.send(Event::Exited {
                         id: game.id,
@@ -342,9 +352,32 @@ impl App {
                     self.need_recheck = true;
                 }
                 Event::LaunchFailed(e) => self.say(e, true, None),
+                Event::Started { id, pid } => {
+                    if let Some(entry) = self.running.get_mut(&id) {
+                        entry.0 = Some(pid);
+                    }
+                }
                 Event::Exited { id, name, success, seconds, log } => {
                     self.running.remove(&id);
-                    if success {
+                    let was_stopped = self.stopped.remove(&id);
+                    // An installer just ended: look for the game it installed, so the user only has to pick it.
+                    if let Ok(g) = self.lib.get(&id) {
+                        if looks_like_installer(&g) {
+                            let found = launch::scan_installed_exes(&g.prefix(&self.lib.paths));
+                            if !found.is_empty() {
+                                self.finder = Some((id.clone(), found));
+                                self.say(
+                                    "The installer has finished. Pick the program that starts the game.".to_string(),
+                                    false,
+                                    None,
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                    if was_stopped {
+                        self.say(format!("{name} was stopped."), false, None);
+                    } else if success {
                         self.say(format!("{name} closed."), false, None);
                     } else if seconds < 20 && !log.as_os_str().is_empty() {
                         self.say(
@@ -378,6 +411,14 @@ impl App {
                     Err(e) => self.say(e.to_string(), true, None),
                 }
                 self.games = self.lib.list().unwrap_or_default();
+            }
+            Action::Stop(id) => {
+                if let Some((Some(pid), _)) = self.running.get(&id) {
+                    let pid = *pid;
+                    self.stopped.insert(id);
+                    self.say("Stopping… this takes a few seconds.", false, None);
+                    std::thread::spawn(move || launch::stop_group(pid));
+                }
             }
             Action::Find(id) => {
                 if let Ok(g) = self.lib.get(&id) {
@@ -650,7 +691,7 @@ impl App {
 
         let games = self.games.clone();
         for g in games {
-            let running = self.running.contains(&g.id);
+            let running = self.running.contains_key(&g.id);
             let mut edited = g.clone();
             let mut changed = false;
             egui::Frame::new().fill(CARD).corner_radius(12).inner_margin(14).show(ui, |ui| {
@@ -662,6 +703,9 @@ impl App {
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if running {
+                            if ui.button("Stop").on_hover_text("End this game or installer completely").clicked() {
+                                actions.push(Action::Stop(g.id.clone()));
+                            }
                             ui.spinner();
                             ui.label(RichText::new("Running").color(ACCENT));
                         } else if ui
@@ -673,6 +717,13 @@ impl App {
                     });
                 });
 
+                if running && looks_like_installer(&g) {
+                    ui.label(
+                        RichText::new("Installing… When the installer says it is finished, close its window. If this still says “Running”, press Stop and WinBridge will find the installed game.")
+                            .color(MUTED)
+                            .size(12.0),
+                    );
+                }
                 if looks_like_installer(&g) {
                     ui.horizontal_wrapped(|ui| {
                         dot(ui, WARN);
