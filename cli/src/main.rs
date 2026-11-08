@@ -7,6 +7,7 @@ use winbridge_core::{
     controllers,
     doctor::{self, Status},
     launch::{self, which},
+    shortcuts::{self, Dirs, Kind},
     Game, Library,
 };
 
@@ -53,6 +54,16 @@ enum Cmd {
     Plan { id: String },
     /// Find .exe files an installer created in a game's prefix
     Scan { id: String },
+    /// Add a game to your applications menu (and optionally the desktop), or remove its shortcuts
+    Shortcut {
+        id: String,
+        /// Also put a shortcut on the desktop
+        #[arg(long)]
+        desktop: bool,
+        /// Remove the game's shortcuts instead
+        #[arg(long)]
+        remove: bool,
+    },
     /// Remove a game from the library
     Remove {
         id: String,
@@ -60,6 +71,15 @@ enum Cmd {
         #[arg(long)]
         delete_data: bool,
     },
+}
+
+/// Best-effort desktop notification (needs `notify-send`); silently does nothing without it.
+fn notify(title: &str, body: &str) {
+    let _ = std::process::Command::new("notify-send")
+        .args(["--app-name=WinBridge", "--icon=dialog-warning", title, body])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 }
 
 fn main() -> Result<()> {
@@ -177,7 +197,8 @@ fn main() -> Result<()> {
         }
         Cmd::Run { id } => {
             let game = lib.get(&id)?;
-            let plan = launch::plan(&game, &lib.paths, &have)?;
+            // Started from a shortcut there is no terminal, so tell the user with a notification.
+            let plan = launch::plan(&game, &lib.paths, &have).inspect_err(|e| notify(&game.name, &e.to_string()))?;
             for w in &plan.warnings {
                 eprintln!("note: {w}");
             }
@@ -195,6 +216,15 @@ fn main() -> Result<()> {
                     log.display()
                 );
                 eprintln!("--- last lines ---\n{}", launch::log_tail(&log, 15));
+                notify(
+                    &game.name,
+                    &format!(
+                        "{} stopped unexpectedly after {}s. The log is at {}",
+                        game.name,
+                        info.seconds,
+                        log.display()
+                    ),
+                );
                 std::process::exit(1);
             }
         }
@@ -202,6 +232,27 @@ fn main() -> Result<()> {
             let game = lib.get(&id)?;
             for p in launch::scan_installed_exes(&game.prefix(&lib.paths)) {
                 println!("{}", p.display());
+            }
+        }
+        Cmd::Shortcut { id, desktop, remove } => {
+            let mut game = lib.get(&id)?;
+            if remove {
+                game.menu_shortcut = false;
+                game.desktop_shortcut = false;
+            } else {
+                game.menu_shortcut = true;
+                game.desktop_shortcut |= desktop;
+            }
+            let dirs = Dirs::for_paths(&lib.paths);
+            shortcuts::sync(&game, &dirs, &shortcuts::run_command())?;
+            lib.save(&game)?;
+            if remove {
+                println!("Removed the shortcuts for {}.", game.name);
+            }
+            for kind in [Kind::Menu, Kind::Desktop] {
+                if let Some(p) = dirs.path(&game.id, kind).filter(|p| p.exists()) {
+                    println!("{}: {}", if kind == Kind::Menu { "Applications menu" } else { "Desktop" }, p.display());
+                }
             }
         }
         Cmd::Remove { id, delete_data } => {
