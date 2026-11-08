@@ -1,0 +1,8 @@
+# <type>(<scope>): <short summary, imperative, max 72 chars>
+#
+# Why this change? (optional body)
+#
+# BREAKING CHANGE: <what breaks and how to migrate>   (optional footer; or use "!" after the type)
+#
+# Types: feat fix perf refactor docs test build ci chore style revert
+# feat = new feature (minor release)   fix/perf = patch release

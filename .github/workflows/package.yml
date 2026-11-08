@@ -1,0 +1,103 @@
+name: Package
+
+# Reusable workflow: builds every package format for the given git ref and uploads each as an
+# artifact (deb, tarball, rpm, arch). CI uses it to prove packaging works on every change;
+# the Release workflow uses it to build what gets attached to a release.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref (tag or commit) to build
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deb:
+    name: .deb (Debian, Ubuntu and derivatives)
+    runs-on: ubuntu-22.04 # oldest glibc we support, so the binary runs on newer systems too
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y fakeroot
+      - run: ./scripts/build-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  tarball:
+    name: Portable tarball (any Linux)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/build-tarball.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  rpm:
+    name: .rpm (Fedora)
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - run: dnf install -y git rust cargo gcc rpm-build tar gzip
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Build
+        run: |
+          VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -1)"
+          cargo build --release --workspace
+          rpmbuild -bb packaging/winbridge.spec \
+            --define "pkgver $VERSION" --define "srcdir $PWD" --define "_topdir $PWD/dist/rpmbuild"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: dist/rpmbuild/RPMS/*/*.rpm
+          if-no-files-found: error
+
+  arch:
+    name: Arch Linux package
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - run: pacman -Syu --noconfirm base-devel rust git sudo
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Build with makepkg
+        run: |
+          VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -1)"
+          git config --global --add safe.directory "$PWD"
+          mkdir -p /tmp/build
+          git archive --prefix="winbridge-$VERSION/" -o "/tmp/build/winbridge-$VERSION.tar.gz" HEAD
+          cp packaging/arch/PKGBUILD /tmp/build/PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=$VERSION/" /tmp/build/PKGBUILD
+          useradd -m builder
+          chown -R builder /tmp/build
+          cd /tmp/build
+          sudo -u builder env "_src=winbridge-$VERSION.tar.gz" makepkg -f --noconfirm
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp /tmp/build/*.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error

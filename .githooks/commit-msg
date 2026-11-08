@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Enable with:  git config core.hooksPath .githooks
+root="$(git rev-parse --show-toplevel)"
+exec "$root/scripts/check-commit-msg.sh" "$(head -n1 "$1")"
