@@ -1,0 +1,14 @@
+[package]
+name = "winbridge-gui"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "winbridge-gui"
+path = "src/main.rs"
+
+[dependencies]
+winbridge-core = { path = "../core" }
+anyhow = "1"
+eframe = "0.37"
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
