@@ -1,6 +1,8 @@
 <!-- The PR title becomes the squash/merge commit and drives releases: use Conventional Commits,
      e.g. "feat(gui): add switch pro artwork" or "fix(core): handle missing /proc entry". -->
 
+**Base branch: `main`.** (Promotions to `dev` and `prod` are done by maintainers; see docs/RELEASING.md.)
+
 ## What and why
 
 <!-- What does this change, and why is it needed? Link the issue: "Closes #123". -->

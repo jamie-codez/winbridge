@@ -55,7 +55,7 @@ tests live, `cli/` and `gui/` are thin front-ends over it.
 ## Making a change
 
 1. **Open an issue first** for anything bigger than a small fix, so we can agree on the approach.
-2. Fork, then create a branch: `git switch -c fix/short-description`.
+2. Fork, then branch from `main`, named after the change type: `git switch -c fix/short-description`.
 3. Keep changes focused. Add or update **tests**, especially in `core/` (we test with realistic
    device data rather than needing hardware: see `core/src/controllers.rs` for examples).
 4. Before pushing, run:
@@ -65,7 +65,7 @@ tests live, `cli/` and `gui/` are thin front-ends over it.
    cargo test --workspace
    ```
    CI runs the same checks.
-5. Open a pull request using the template. Explain *what* and *why*, and say how you tested it,
+5. Open a pull request **into `main`** using the template. Explain *what* and *why*, and say how you tested it,
    including what you could **not** test.
 
 ### Style
@@ -119,15 +119,16 @@ and the privileged commands in the helper section. The script has a `WINBRIDGE_O
 override so you can test the logic against a fake `/etc/os-release`. CI runs
 `install-deps.sh --list` inside Debian, Ubuntu, Fedora and Arch containers.
 
-## Releases (automatic)
+## Branches and releases
 
-You don't tag releases by hand. When commits land on `main`, the *Release* workflow runs
-[semantic-release](https://semantic-release.gitbook.io): it reads the Conventional Commits since the last
-release, picks the next version, updates `CHANGELOG.md` and `Cargo.toml`, creates the `vX.Y.Z` tag and
-GitHub release with generated notes, then builds the `.deb`, `.rpm`, Arch and tarball packages and attaches
-them with checksums. No `feat`/`fix`/`perf` commits means no release.
+Changes go **feature branch → `main` → `dev` (pre-release) → `prod` (stable)**. Open pull requests
+against `main` only; maintainers promote it. The full process, with the exact commands, is in
+[docs/RELEASING.md](docs/RELEASING.md).
 
-Maintainers: merge pull requests with **squash** (the PR title becomes the commit) or keep history linear.
+You never tag or version anything by hand: when `dev` or `prod` is updated, the *Release* workflow runs
+[semantic-release](https://semantic-release.gitbook.io), picks the version from the Conventional Commits
+(`feat` → minor, `fix`/`perf` → patch), creates the tag and GitHub release with notes, then builds and attaches
+the `.deb`, `.rpm`, Arch and tarball packages with checksums.
 
 ## Questions
 

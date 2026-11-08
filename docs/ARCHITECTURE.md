@@ -57,7 +57,9 @@ Exit codes of `--check`: `0` nothing to do, `10` setup needed, `2` unsupported d
 
 ## Release flow
 
-Conventional Commits on `main` → *Release* workflow → semantic-release decides the version,
-updates `CHANGELOG.md` and `Cargo.toml`, tags `vX.Y.Z` and creates the GitHub release → the
-*Package* workflow builds `.deb`, `.rpm`, Arch and tarball packages for that tag → they're attached
-with `SHA256SUMS.txt`. The same *Package* workflow runs on every push as part of CI.
+`feat/*` → PR → **`main`** (source of truth, no release) → promote → **`dev`** (pre-release) → promote →
+**`prod`** (stable). A push to `dev` or `prod` runs the *Release* workflow: semantic-release picks the
+version from the Conventional Commits and tags it, the *Package* workflow builds `.deb`, `.rpm`, Arch and
+tarball packages for that tag (stamping the version into them), and they are attached with
+`SHA256SUMS.txt`. The same *Package* workflow runs on every push as part of CI. Details:
+[RELEASING.md](RELEASING.md).

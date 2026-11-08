@@ -43,7 +43,8 @@ usually go wrong: missing graphics libraries, broken Wine setups, controllers th
 ## Install
 
 Download the package for your distribution from the
-[latest release](https://github.com/jamie-codez/winbridge/releases/latest).
+[latest release](https://github.com/jamie-codez/winbridge/releases/latest). Want to try new things early?
+Pre-releases (`-dev.N`, from the `dev` branch) are on the [releases page](https://github.com/jamie-codez/winbridge/releases) too.
 
 | Platform | Package | Install |
 |---|---|---|
