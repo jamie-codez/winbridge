@@ -93,9 +93,17 @@ jobs:
           useradd -m builder
           chown -R builder /tmp/build
           cd /tmp/build
-          sudo -u builder env "_src=winbridge-$VERSION.tar.gz" makepkg -f --noconfirm
+          # --nodeps: the package's *runtime* dependencies are only metadata here; the container has
+          # just the build tools (cargo). The next step proves they resolve by installing the package.
+          sudo -u builder env "_src=winbridge-$VERSION.tar.gz" makepkg -f --noconfirm --nodeps
           mkdir -p "$GITHUB_WORKSPACE/dist"
           cp /tmp/build/*.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
+      - name: Install the package on a clean Arch system and run it
+        run: |
+          pacman -U --noconfirm dist/*.pkg.tar.zst
+          pacman -Qi winbridge | grep -E '^(Name|Version|Depends On)'
+          winbridge --version
+          winbridge doctor || true   # no GPU or display in CI; we only check that it starts
       - uses: actions/upload-artifact@v4
         with:
           name: arch
