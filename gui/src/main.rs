@@ -21,6 +21,7 @@ use winbridge_core::{
     layout::Layout,
     mapping::{self, Wizard},
     setup::{self, SetupState},
+    shortcuts::{self, Dirs},
     Game, GamescopeConfig, Library,
 };
 
@@ -270,11 +271,30 @@ impl App {
     fn add_exe(&mut self, exe: PathBuf) {
         let name = name_from_exe(&exe);
         match self.lib.add(Game::new(&name, exe)) {
-            Ok(g) => {
-                self.say(format!("Added “{}”. Press Play to start it.", g.name), false, None);
+            Ok(mut g) => {
+                if looks_like_installer(&g) {
+                    self.say(format!("Added “{}”. Press Play to start it.", g.name), false, None);
+                } else {
+                    g.menu_shortcut = true;
+                    let _ = self.lib.save(&g);
+                    self.sync_shortcuts(&g);
+                    self.say(
+                        format!("Added “{}” and put it in your applications menu. Press Play to start it.", g.name),
+                        false,
+                        None,
+                    );
+                }
                 self.games = self.lib.list().unwrap_or_default();
             }
             Err(e) => self.say(format!("Couldn't add that file: {e}"), true, None),
+        }
+    }
+
+    /// Make the applications-menu / desktop shortcut files match the game's settings.
+    fn sync_shortcuts(&mut self, game: &Game) {
+        let dirs = Dirs::for_paths(&self.lib.paths);
+        if let Err(e) = shortcuts::sync(game, &dirs, &shortcuts::run_command()) {
+            self.say(format!("Couldn't update the shortcut: {e}"), true, None);
         }
     }
 
@@ -400,6 +420,7 @@ impl App {
                 if let Err(e) = self.lib.save(&g) {
                     self.say(format!("Couldn't save settings: {e}"), true, None);
                 }
+                self.sync_shortcuts(&g);
                 self.games = self.lib.list().unwrap_or_default();
             }
             Action::Remove(id) => {
@@ -438,8 +459,14 @@ impl App {
                 if let Ok(mut g) = self.lib.get(&id) {
                     g.name = name_from_exe(&exe);
                     g.exe = exe;
+                    g.menu_shortcut = true; // the installed game now shows up in the applications menu
                     let _ = self.lib.save(&g);
-                    self.say(format!("“{}” is ready. Press Play!", g.name), false, None);
+                    self.sync_shortcuts(&g);
+                    self.say(
+                        format!("“{}” is ready and is in your applications menu. Press Play!", g.name),
+                        false,
+                        None,
+                    );
                 }
                 self.games = self.lib.list().unwrap_or_default();
             }
@@ -737,6 +764,11 @@ impl App {
                 egui::CollapsingHeader::new("Settings").id_salt(&g.id).show(ui, |ui| {
                     changed |= ui.checkbox(&mut edited.gamemode, "Performance boost (GameMode)").changed();
                     changed |= ui.checkbox(&mut edited.mangohud, "Show FPS counter").changed();
+                    changed |= ui
+                        .checkbox(&mut edited.menu_shortcut, "Show in my applications menu")
+                        .on_hover_text("Start this game from your normal launcher, like any other app")
+                        .changed();
+                    changed |= ui.checkbox(&mut edited.desktop_shortcut, "Put a shortcut on my desktop").changed();
 
                     let has_gs = self.tools.contains("gamescope");
                     let mut limit = edited.gamescope.as_ref().and_then(|gs| gs.fps_limit).is_some();
