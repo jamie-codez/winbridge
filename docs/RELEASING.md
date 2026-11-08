@@ -85,7 +85,16 @@ Pre-release versions are written so that package managers sort them **before** t
 
 ## Maintainers: first-time setup
 
-- Default branch: `main`. Create `dev` and `prod` from it.
+- Default branch: `main`. Create **`prod` first, then `dev`**, both from `main`:
+  ```bash
+  git push origin main:refs/heads/prod
+  git push origin main:refs/heads/dev
+  ```
+  The order matters: semantic-release needs the stable branch (`prod`) to exist on the remote, even
+  when it releases from `dev`. Pushing `dev` first fails with `ERELEASEBRANCHES ... These branches must
+  exist on the remote repository`. (If that happens, create `prod` and re-run the failed workflow.)
+  Note that pushing `prod` right away also publishes the stable release, so for a first release it is
+  best to create `prod`, then `dev`, make your first changes on `dev`, and promote when ready.
 - Repository setting **Actions → General → Workflow permissions** must allow *Read and write*
   (the release workflow also declares the permissions it needs).
 - Recommended: protect `main`, `dev` and `prod` (require a pull request and the CI checks) so

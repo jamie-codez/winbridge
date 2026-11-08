@@ -43,6 +43,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Check that both release branches exist
+        # semantic-release needs at least one stable branch (prod) to exist on the remote, even when
+        # releasing from dev. Without it, it fails with a confusing ERELEASEBRANCHES error.
+        run: |
+          for b in prod dev; do
+            git ls-remote --exit-code --heads origin "$b" >/dev/null || {
+              echo "::error::The '$b' branch does not exist yet. Create prod first, then dev (see docs/RELEASING.md > First-time setup)."
+              exit 1
+            }
+          done
       - uses: actions/setup-node@v4
         with:
           node-version: 22
