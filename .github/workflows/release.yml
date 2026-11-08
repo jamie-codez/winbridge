@@ -1,0 +1,78 @@
+name: Release
+
+# Semantic releases. Every push to main is analysed with semantic-release:
+#   feat: -> minor   fix:/perf: -> patch   (a "!" or "BREAKING CHANGE:" -> minor while we're on 0.x)
+# If there is something to release it bumps the version, updates CHANGELOG.md, tags vX.Y.Z,
+# creates the GitHub release with notes, builds every package for that tag and attaches them.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  semantic:
+    name: Version, changelog and tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install stable Rust (used to refresh Cargo.lock)
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: semantic-release
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          npx --yes
+          -p semantic-release@24
+          -p @semantic-release/changelog@6
+          -p @semantic-release/git@10
+          -p @semantic-release/exec@6
+          -p conventional-changelog-conventionalcommits@8
+          semantic-release
+
+  package:
+    name: Build release packages
+    needs: semantic
+    if: needs.semantic.outputs.version != ''
+    uses: ./.github/workflows/package.yml
+    with:
+      ref: v${{ needs.semantic.outputs.version }}
+
+  publish:
+    name: Attach packages to the release
+    needs: [semantic, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.semantic.outputs.version }}
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "v$VERSION" * --clobber --repo "$GITHUB_REPOSITORY"
