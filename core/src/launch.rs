@@ -1,7 +1,8 @@
 use std::{
     collections::BTreeMap,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::Write as _,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -33,10 +34,28 @@ pub struct LaunchPlan {
     pub warnings: Vec<String>,
 }
 
+/// Environment variable names that probably hold a credential. Their values never reach a log.
+fn is_sensitive(name: &str) -> bool {
+    let n = name.to_ascii_uppercase();
+    ["TOKEN", "KEY", "SECRET", "PASS", "CRED", "AUTH", "COOKIE"].iter().any(|w| n.contains(w))
+}
+
 impl LaunchPlan {
     /// Human-readable command line, written to the log for troubleshooting.
     pub fn display(&self) -> String {
-        let env: Vec<String> = self.env.iter().map(|(k, v)| format!("{k}={v:?}")).collect();
+        let env: Vec<String> = self
+            .env
+            .iter()
+            .map(|(k, v)| {
+                if is_sensitive(k) {
+                    format!("{k}=<hidden>")
+                } else if k == "SDL_GAMECONTROLLERCONFIG" {
+                    format!("{k}=<{} controller mapping(s)>", v.lines().count())
+                } else {
+                    format!("{k}={v:?}")
+                }
+            })
+            .collect();
         format!("{} {} {}", env.join(" "), self.program, self.args.join(" "))
     }
 }
@@ -126,16 +145,18 @@ pub struct RunningGame {
     pub child: Child,
     pub log_path: PathBuf,
     pub started: Instant,
-    /// `gamemoded -r` companion; stopped when the game ends (see `Drop`).
-    helper: Option<Child>,
+    /// `gamemoded -r` companion; stopped when the game ends.
+    _gamemode: Option<GameModeHelper>,
 }
 
-impl Drop for RunningGame {
+/// Asks the host's GameMode daemon for a performance boost for as long as it lives. Dropping it
+/// stops the request, including when `spawn` fails after the helper has already started.
+struct GameModeHelper(Child);
+
+impl Drop for GameModeHelper {
     fn drop(&mut self) {
-        if let Some(h) = self.helper.as_mut() {
-            let _ = h.kill();
-            let _ = h.wait();
-        }
+        let _ = self.0.kill();
+        let _ = self.0.wait();
     }
 }
 
@@ -157,19 +178,22 @@ impl RunningGame {
 
 pub fn spawn(game: &Game, paths: &Paths, plan: &LaunchPlan) -> Result<RunningGame> {
     fs::create_dir_all(game.prefix(paths))?;
-    fs::create_dir_all(paths.logs_dir())?;
+    let logs = paths.logs_dir();
+    fs::create_dir_all(&logs)?;
+    // Logs can contain paths and game output: keep them to the owner.
+    fs::set_permissions(&logs, fs::Permissions::from_mode(0o700))?;
 
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    let log_path = paths.logs_dir().join(format!("{}-{ts}.log", game.id));
-    let mut log = File::create(&log_path)?;
+    let (log_path, mut log) = create_log(&logs, &game.id)?;
     writeln!(log, "# WinBridge launch of '{}'\n# {}\n", game.name, plan.display())?;
     for w in &plan.warnings {
         writeln!(log, "# warning: {w}")?;
     }
-    prune_logs(&paths.logs_dir(), &game.id, 10);
+    prune_logs(&logs, &game.id, 10, &log_path);
 
-    // Host-side GameMode: the daemon boosts the CPU for as long as this helper lives.
-    let helper = if plan.gamemode {
+    // Everything that can fail is done before the GameMode helper starts, and the helper sits in a
+    // guard, so a failed launch can never leave the performance request running.
+    let stdout = Stdio::from(log.try_clone()?);
+    let gamemode = if plan.gamemode {
         match Command::new("gamemoded")
             .arg("-r")
             .stdin(Stdio::null())
@@ -177,7 +201,7 @@ pub fn spawn(game: &Game, paths: &Paths, plan: &LaunchPlan) -> Result<RunningGam
             .stderr(Stdio::null())
             .spawn()
         {
-            Ok(h) => Some(h),
+            Ok(h) => Some(GameModeHelper(h)),
             Err(e) => {
                 writeln!(log, "# warning: could not start GameMode: {e}")?;
                 None
@@ -192,27 +216,58 @@ pub fn spawn(game: &Game, paths: &Paths, plan: &LaunchPlan) -> Result<RunningGam
         .envs(&plan.env)
         .current_dir(&plan.cwd)
         .stdin(Stdio::null())
-        .stdout(Stdio::from(log.try_clone()?))
+        .stdout(stdout)
         .stderr(Stdio::from(log))
         .spawn()
-        .with_context(|| format!("could not start '{}'", plan.program))?;
-    Ok(RunningGame { child, log_path, started: Instant::now(), helper })
+        .with_context(|| format!("could not start '{}'", plan.program))?; // `gamemode` drops (and stops) here on error
+    Ok(RunningGame { child, log_path, started: Instant::now(), _gamemode: gamemode })
 }
 
-/// Keep only the newest `keep` logs for a game.
-fn prune_logs(dir: &Path, id: &str, keep: usize) {
-    let prefix = format!("{id}-");
+/// Create a brand-new log file `<id>-<unix millis>.log`, owner-readable only. Never truncates an
+/// existing log: on a name clash (two launches in the same millisecond) it uses `<id>-<millis>_<n>.log`.
+fn create_log(dir: &Path, id: &str) -> Result<(PathBuf, File)> {
+    let millis = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+    for n in 0..1000u32 {
+        let name = if n == 0 { format!("{id}-{millis}.log") } else { format!("{id}-{millis}_{n}.log") };
+        let path = dir.join(name);
+        match OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path) {
+            Ok(f) => return Ok((path, f)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    bail!("could not create a unique log file in {}", dir.display())
+}
+
+/// Sort key of a log file name for `id`, or None if it isn't one of this game's logs. The part after
+/// `<id>-` must be `<digits>` or `<digits>_<digits>`, so `game-2-123.log` is NOT a log of `game`.
+fn log_key(file_name: &str, id: &str) -> Option<(u128, u32)> {
+    let rest = file_name.strip_prefix(id)?.strip_prefix('-')?.strip_suffix(".log")?;
+    let (stamp, n) = match rest.split_once('_') {
+        Some((a, b)) => (a, b),
+        None => (rest, "0"),
+    };
+    let all_digits = |t: &str| !t.is_empty() && t.bytes().all(|c| c.is_ascii_digit());
+    if all_digits(stamp) && all_digits(n) {
+        Some((stamp.parse().ok()?, n.parse().ok()?))
+    } else {
+        None
+    }
+}
+
+/// Keep only the newest `keep` logs of this game, and never delete `current`.
+fn prune_logs(dir: &Path, id: &str, keep: usize, current: &Path) {
     let Ok(rd) = fs::read_dir(dir) else { return };
-    let mut logs: Vec<PathBuf> = rd
+    let mut logs: Vec<((u128, u32), PathBuf)> = rd
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".log"))
-        })
+        .filter_map(|p| Some((log_key(p.file_name()?.to_str()?, id)?, p)))
         .collect();
     logs.sort();
     if logs.len() > keep {
-        for old in &logs[..logs.len() - keep] {
-            let _ = fs::remove_file(old);
+        for (_, old) in &logs[..logs.len() - keep] {
+            if old != current {
+                let _ = fs::remove_file(old);
+            }
         }
     }
 }
@@ -354,5 +409,73 @@ mod tests {
         let found = scan_installed_exes(d.path());
         assert_eq!(found.len(), 1);
         assert!(found[0].ends_with("cool.exe"));
+    }
+    #[test]
+    fn pruning_never_touches_another_games_logs() {
+        let d = tempfile::tempdir().unwrap();
+        // Games "game" and "game-2" (the id a second game named "Game" gets) share a prefix.
+        for i in 0..12 {
+            fs::write(d.path().join(format!("game-{}.log", 1000 + i)), "a").unwrap();
+            fs::write(d.path().join(format!("game-2-{}.log", 1000 + i)), "b").unwrap();
+        }
+        let current = d.path().join("game-1011.log");
+        prune_logs(d.path(), "game", 10, &current);
+        let count = |prefix: &str| {
+            fs::read_dir(d.path())
+                .unwrap()
+                .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().starts_with(prefix))
+                .count()
+        };
+        assert_eq!(count("game-2-"), 12, "the other game lost logs");
+        assert_eq!(count("game-1"), 10);
+        assert!(current.exists(), "the newest log was deleted");
+    }
+
+    #[test]
+    fn log_keys() {
+        assert_eq!(log_key("game-1700.log", "game"), Some((1700, 0)));
+        assert_eq!(log_key("game-1700_3.log", "game"), Some((1700, 3)));
+        assert_eq!(log_key("game-2-1700.log", "game"), None);
+        assert_eq!(log_key("game-2-1700.log", "game-2"), Some((1700, 0)));
+        assert_eq!(log_key("other-1700.log", "game"), None);
+    }
+
+    #[test]
+    fn rapid_launches_get_separate_logs_that_are_private() {
+        let d = tempfile::tempdir().unwrap();
+        let (p1, mut f1) = create_log(d.path(), "hades").unwrap();
+        writeln!(f1, "first run failed").unwrap();
+        // Force a collision by creating many logs at once; none may overwrite another.
+        let mut paths = vec![p1.clone()];
+        for _ in 0..50 {
+            paths.push(create_log(d.path(), "hades").unwrap().0);
+        }
+        paths.sort();
+        paths.dedup();
+        assert_eq!(paths.len(), 51, "two launches shared a log file");
+        assert_eq!(fs::read_to_string(&p1).unwrap().trim(), "first run failed");
+        assert_eq!(fs::metadata(&p1).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn credentials_do_not_reach_the_log() {
+        let d = tempfile::tempdir().unwrap();
+        let mut g = game(d.path());
+        g.env.insert("EPIC_API_TOKEN".into(), "hunter2-secret".into());
+        g.env.insert("DXVK_HUD".into(), "fps".into());
+        let shown = plan(&g, &paths(d.path()), &|_| true).unwrap().display();
+        assert!(!shown.contains("hunter2"), "{shown}");
+        assert!(shown.contains("EPIC_API_TOKEN=<hidden>"));
+        assert!(shown.contains("DXVK_HUD=\"fps\""));
+    }
+
+    #[test]
+    fn gamemode_helper_stops_when_dropped() {
+        // Models a failed game launch: the helper must not outlive its guard.
+        let child = Command::new("sleep").arg("60").spawn().unwrap();
+        let pid = child.id();
+        assert!(Path::new(&format!("/proc/{pid}")).exists());
+        drop(GameModeHelper(child));
+        assert!(!Path::new(&format!("/proc/{pid}")).exists(), "helper process was left running");
     }
 }
