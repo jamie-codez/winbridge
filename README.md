@@ -28,6 +28,9 @@ usually go wrong: missing graphics libraries, broken Wine setups, controllers th
   distribution's package manager. You enter your password once.
 - **Add a game by dragging its `.exe` onto the window.** Installers work too: run the installer,
   then press *Find installed game*.
+- **Games in your normal applications menu.** Each game can get a launcher entry (and a desktop
+  shortcut), so you start it like any other app, without opening WinBridge first. Games you add, and
+  games found after an installer, are added to the menu automatically; you can switch it off per game.
 - **One private Windows folder per game**, so one broken game can't break another, and
   nothing updates behind your back.
 - **A Health Check page** that explains in plain language what is missing and gives the exact
@@ -105,6 +108,7 @@ winbridge setup             # install what's missing
 winbridge add ~/Games/Hades/Hades.exe --steam-id 1145360
 winbridge list
 winbridge run hades
+winbridge shortcut hades --desktop   # applications menu (+ desktop); --remove to undo
 winbridge controllers --watch --seconds 30   # live button test
 ```
 
