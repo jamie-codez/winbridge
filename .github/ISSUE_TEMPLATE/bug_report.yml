@@ -1,0 +1,46 @@
+name: Bug report
+description: Something in WinBridge itself is broken or confusing
+title: "fix: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping! For *a specific game that won't run*, please use the **Game report** form instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: WinBridge version
+      description: "Run `winbridge --version`, or tell us how you installed it."
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Linux distribution and version
+      placeholder: Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: Graphics card and driver
+      placeholder: Intel UHD (Mesa 25.2) / NVIDIA RTX 3060 (driver 570)
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `winbridge doctor`
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Anything relevant from `~/.local/share/winbridge/logs/`. Please remove private information.
+      render: text
