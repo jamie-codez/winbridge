@@ -16,6 +16,8 @@ optdepends=('umu-launcher: the game engine launcher (WinBridge installs it on fi
             'gamescope: frame pacing and scaling'
             'game-devices-udev: controller access rules')
 source=("${_src:-$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz}")
+# 'SKIP' only in this repository copy: CI replaces it with the checksum of the tarball it builds.
+# Before publishing to the AUR run `updpkgsums` so users verify the release archive.
 sha256sums=('SKIP')
 
 build() {

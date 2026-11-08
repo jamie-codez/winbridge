@@ -120,6 +120,9 @@ jobs:
           git archive --prefix="winbridge-$PKGVER/" -o "/tmp/build/winbridge-$PKGVER.tar.gz" HEAD
           cp packaging/arch/PKGBUILD /tmp/build/PKGBUILD
           sed -i "s/^pkgver=.*/pkgver=$PKGVER/" /tmp/build/PKGBUILD
+          # makepkg then verifies the archive it builds from against this checksum.
+          SUM="$(sha256sum "/tmp/build/winbridge-$PKGVER.tar.gz" | cut -d' ' -f1)"
+          sed -i "s/^sha256sums=.*/sha256sums=('$SUM')/" /tmp/build/PKGBUILD
           useradd -m builder
           chown -R builder /tmp/build
           cd /tmp/build
