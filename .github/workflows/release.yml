@@ -83,6 +83,9 @@ jobs:
           VERSION: ${{ needs.semantic.outputs.version }}
         run: |
           cd artifacts
+          # Artifacts can keep sub-folders (the rpm one kept x86_64/); we want plain files only.
+          find . -mindepth 2 -type f -exec mv -t . {} +
+          find . -mindepth 1 -type d -empty -delete
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
           gh release upload "v$VERSION" * --clobber --repo "$GITHUB_REPOSITORY"
