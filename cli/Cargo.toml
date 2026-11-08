@@ -1,0 +1,13 @@
+[package]
+name = "winbridge-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "winbridge"
+path = "src/main.rs"
+
+[dependencies]
+winbridge-core = { path = "../core" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
