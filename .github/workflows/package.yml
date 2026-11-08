@@ -30,7 +30,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y fakeroot
       - run: ./scripts/build-deb.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: deb
           path: dist/*.deb
@@ -46,7 +46,7 @@ jobs:
       - run: rustup toolchain install stable --profile minimal && rustup default stable
       - uses: Swatinem/rust-cache@v2
       - run: ./scripts/build-tarball.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tarball
           path: dist/*.tar.gz
@@ -67,7 +67,7 @@ jobs:
           cargo build --release --workspace
           rpmbuild -bb packaging/winbridge.spec \
             --define "pkgver $VERSION" --define "srcdir $PWD" --define "_topdir $PWD/dist/rpmbuild"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: rpm
           path: dist/rpmbuild/RPMS/*/*.rpm
@@ -96,7 +96,7 @@ jobs:
           sudo -u builder env "_src=winbridge-$VERSION.tar.gz" makepkg -f --noconfirm
           mkdir -p "$GITHUB_WORKSPACE/dist"
           cp /tmp/build/*.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arch
           path: dist/*.pkg.tar.zst
