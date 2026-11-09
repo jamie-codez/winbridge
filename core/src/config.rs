@@ -44,6 +44,12 @@ pub struct Game {
     pub gamescope: Option<GamescopeConfig>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Show this game in the system applications menu (a `.desktop` file; see `shortcuts`).
+    #[serde(default)]
+    pub menu_shortcut: bool,
+    /// Also put a shortcut on the desktop.
+    #[serde(default)]
+    pub desktop_shortcut: bool,
 }
 
 fn default_game_id() -> String {
@@ -63,6 +69,8 @@ impl Game {
             mangohud: false,
             gamescope: None,
             env: BTreeMap::new(),
+            menu_shortcut: false,
+            desktop_shortcut: false,
         }
     }
 
@@ -171,7 +179,9 @@ impl Library {
         Ok(())
     }
 
-    /// Remove the game entry. The prefix (saves!) is only deleted on request.
+    /// Remove the game entry. The prefix (the installed game and its saves!) is only deleted on request;
+    /// then the game's logs go too, so an uninstalled game leaves nothing behind.
+    /// Folders the user chose themselves (a game's .exe outside the prefix) are never touched.
     pub fn remove(&self, id: &str, delete_prefix: bool) -> Result<()> {
         let game = self.get(id)?;
         // Delete the data first: if that fails the entry is still there, so the user can retry.
@@ -182,6 +192,11 @@ impl Library {
             }
         }
         fs::remove_file(self.file(id))?;
+        if delete_prefix {
+            crate::launch::delete_logs(&self.paths.logs_dir(), id);
+        }
+        // Don't leave dead shortcuts behind in the applications menu or on the desktop.
+        crate::shortcuts::remove_all(id, &crate::shortcuts::Dirs::for_paths(&self.paths));
         Ok(())
     }
 }
@@ -254,6 +269,46 @@ mod tests {
         assert!(result.is_err());
         assert!(lib.get(&game.id).is_ok(), "the library entry vanished although its data is still there");
         assert!(lib.remove(&game.id, true).is_ok(), "retrying after fixing permissions must work");
+    }
+
+    #[test]
+    fn uninstall_removes_game_files_logs_and_shortcuts_but_nothing_else() {
+        let (dir, lib) = lib();
+        let exe = dir.path().join("outside/a.exe");
+        fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        fs::write(&exe, b"MZ").unwrap();
+        let hades = lib.add(Game::new("Hades", exe.clone())).unwrap();
+        let other = lib.add(Game::new("Hades 2", exe.clone())).unwrap();
+        for g in [&hades, &other] {
+            fs::create_dir_all(g.prefix(&lib.paths).join("drive_c")).unwrap();
+        }
+        let logs = lib.paths.logs_dir();
+        fs::create_dir_all(&logs).unwrap();
+        for name in ["hades-100.log", "hades-100_1.log", "hades-2-100.log"] {
+            fs::write(logs.join(name), "x").unwrap();
+        }
+
+        lib.remove(&hades.id, true).unwrap();
+
+        assert!(!hades.prefix(&lib.paths).exists(), "game files were left behind");
+        assert!(!logs.join("hades-100.log").exists() && !logs.join("hades-100_1.log").exists());
+        assert!(logs.join("hades-2-100.log").exists(), "another game's log was deleted");
+        assert!(other.prefix(&lib.paths).exists(), "another game's files were deleted");
+        assert!(exe.exists(), "a program outside WinBridge's own folder was deleted");
+    }
+
+    #[test]
+    fn plain_remove_keeps_files_and_logs() {
+        let (dir, lib) = lib();
+        let exe = dir.path().join("a.exe");
+        fs::write(&exe, b"MZ").unwrap();
+        let g = lib.add(Game::new("Hades", exe)).unwrap();
+        fs::create_dir_all(g.prefix(&lib.paths)).unwrap();
+        fs::create_dir_all(lib.paths.logs_dir()).unwrap();
+        fs::write(lib.paths.logs_dir().join("hades-100.log"), "x").unwrap();
+        lib.remove(&g.id, false).unwrap();
+        assert!(g.prefix(&lib.paths).exists());
+        assert!(lib.paths.logs_dir().join("hades-100.log").exists());
     }
 
     #[test]

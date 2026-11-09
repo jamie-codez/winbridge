@@ -2,7 +2,10 @@ use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::Write as _,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    os::unix::{
+        fs::{OpenOptionsExt, PermissionsExt},
+        process::CommandExt,
+    },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -167,7 +170,32 @@ pub struct ExitInfo {
     pub seconds: u64,
 }
 
+/// Politely end a running game's whole process group (SIGTERM), then force it (SIGKILL) if it hasn't
+/// gone after about three seconds. `pid` is the id reported by [`RunningGame::pid`].
+/// Blocking: call it from a background thread.
+pub fn stop_group(pid: u32) {
+    let group = -(pid as i32);
+    // SAFETY: plain signal-sending syscalls on a process group id we created with `process_group(0)`.
+    unsafe {
+        libc::kill(group, libc::SIGTERM);
+    }
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if unsafe { libc::kill(group, 0) } != 0 {
+            return; // nothing left in the group
+        }
+    }
+    unsafe {
+        libc::kill(group, libc::SIGKILL);
+    }
+}
+
 impl RunningGame {
+    /// Process id of the launched command; also its process group id (see `stop_group`).
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     pub fn wait(mut self) -> Result<(ExitInfo, PathBuf)> {
         let status: ExitStatus = self.child.wait()?;
         let info =
@@ -215,6 +243,8 @@ pub fn spawn(game: &Game, paths: &Paths, plan: &LaunchPlan) -> Result<RunningGam
         .args(&plan.args)
         .envs(&plan.env)
         .current_dir(&plan.cwd)
+        // Own process group, so the whole session (launcher, Wine, helpers) can be stopped together.
+        .process_group(0)
         .stdin(Stdio::null())
         .stdout(stdout)
         .stderr(Stdio::from(log))
@@ -270,6 +300,11 @@ fn prune_logs(dir: &Path, id: &str, keep: usize, current: &Path) {
             }
         }
     }
+}
+
+/// Delete every log of this game (used when the game is uninstalled). Other games' logs are untouched.
+pub fn delete_logs(dir: &Path, id: &str) {
+    prune_logs(dir, id, 0, Path::new(""));
 }
 
 /// Last `n` lines of a log, for showing the user what went wrong.
@@ -467,6 +502,23 @@ mod tests {
         assert!(!shown.contains("hunter2"), "{shown}");
         assert!(shown.contains("EPIC_API_TOKEN=<hidden>"));
         assert!(shown.contains("DXVK_HUD=\"fps\""));
+    }
+
+    #[test]
+    fn stop_ends_the_launched_process_and_everything_it_started() {
+        // A launcher that starts a background helper and waits for it, like Proton does.
+        let mut parent = Command::new("sh").args(["-c", "sleep 300 & wait"]).process_group(0).spawn().unwrap();
+        let pid = parent.id();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let children = fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")).unwrap_or_default();
+        assert!(!children.trim().is_empty(), "test setup: the helper never started");
+        std::thread::spawn(move || stop_group(pid));
+        let status = parent.wait().unwrap();
+        assert!(!status.success(), "the launcher should have been terminated");
+        for child in children.split_whitespace() {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            assert!(!Path::new(&format!("/proc/{child}")).exists(), "helper {child} survived the stop");
+        }
     }
 
     #[test]
