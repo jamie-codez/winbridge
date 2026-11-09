@@ -98,3 +98,5 @@ jobs:
     uses: ./.github/workflows/package.yml
     with:
       ref: ${{ github.sha }}
+      # A pre-release version, so every CI run exercises the pre-release spelling of each package format.
+      version: 0.0.0-ci.1
