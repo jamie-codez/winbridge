@@ -44,6 +44,12 @@ pub struct Game {
     pub gamescope: Option<GamescopeConfig>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Show this game in the system applications menu (a `.desktop` file; see `shortcuts`).
+    #[serde(default)]
+    pub menu_shortcut: bool,
+    /// Also put a shortcut on the desktop.
+    #[serde(default)]
+    pub desktop_shortcut: bool,
 }
 
 fn default_game_id() -> String {
@@ -63,6 +69,8 @@ impl Game {
             mangohud: false,
             gamescope: None,
             env: BTreeMap::new(),
+            menu_shortcut: false,
+            desktop_shortcut: false,
         }
     }
 
@@ -182,6 +190,8 @@ impl Library {
             }
         }
         fs::remove_file(self.file(id))?;
+        // Don't leave dead shortcuts behind in the applications menu or on the desktop.
+        crate::shortcuts::remove_all(id, &crate::shortcuts::Dirs::for_paths(&self.paths));
         Ok(())
     }
 }
