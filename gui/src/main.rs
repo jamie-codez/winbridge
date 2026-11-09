@@ -375,19 +375,10 @@ impl App {
                             }
                         }
                     }
-                    if was_stopped {
-                        self.say(format!("{name} was stopped."), false, None);
-                    } else if success {
-                        self.say(format!("{name} closed."), false, None);
-                    } else if seconds < 20 && !log.as_os_str().is_empty() {
-                        self.say(
-                            format!("{name} stopped right after starting. This usually means the game needs a different setting, or isn't supported on Linux (some games block it)."),
-                            true,
-                            Some(log),
-                        );
-                    } else if !log.as_os_str().is_empty() {
-                        self.say(format!("{name} closed unexpectedly."), true, Some(log));
-                    }
+                    let (text, bad) = exit_notice(&name, success, was_stopped, seconds);
+                    // Offer the log whenever something looks wrong.
+                    let log = (bad && !log.as_os_str().is_empty()).then_some(log);
+                    self.say(text, bad, log);
                 }
             }
         }
@@ -450,6 +441,32 @@ impl App {
 fn dot(ui: &mut egui::Ui, color: Color32) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
     ui.painter().circle_filled(r.center(), 5.0, color);
+}
+
+/// A game that ends sooner than this after starting is treated as a problem even if the launcher
+/// reported success: Proton returns "success" no matter how the game itself ended.
+const EARLY_EXIT_SECONDS: u64 = 30;
+
+/// What to tell the user when a game ends, and whether it looks like something went wrong.
+fn exit_notice(name: &str, success: bool, was_stopped: bool, seconds: u64) -> (String, bool) {
+    if was_stopped {
+        return (format!("{name} was stopped."), false);
+    }
+    if seconds < EARLY_EXIT_SECONDS {
+        return (
+            format!(
+                "{name} closed by itself after {seconds} seconds. That usually means the game quit on its own: \
+                 it may need a different setting, or it may refuse to run on Linux (some copy protection does). \
+                 “Show log” has the details."
+            ),
+            true,
+        );
+    }
+    if success {
+        (format!("{name} closed."), false)
+    } else {
+        (format!("{name} closed unexpectedly."), true)
+    }
 }
 
 fn looks_like_installer(g: &Game) -> bool {
@@ -1170,4 +1187,26 @@ fn stick(ui: &mut egui::Ui, label: &str, (x, y): (f32, f32)) {
         ui.painter().circle_filled(c + egui::vec2(x, y) * 32.0, 9.0, ACCENT);
         ui.label(RichText::new(label).size(11.0).color(MUTED));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_exit_is_a_problem_even_when_the_launcher_says_success() {
+        let (text, bad) = exit_notice("FIFA 14", true, false, 12);
+        assert!(bad && text.contains("12 seconds") && text.contains("Show log"), "{text}");
+    }
+
+    #[test]
+    fn normal_sessions_and_stops_are_not_problems() {
+        assert_eq!(exit_notice("G", true, false, 3600), ("G closed.".to_string(), false));
+        assert_eq!(exit_notice("G", true, true, 2), ("G was stopped.".to_string(), false));
+    }
+
+    #[test]
+    fn long_run_that_fails_is_unexpected() {
+        assert_eq!(exit_notice("G", false, false, 300), ("G closed unexpectedly.".to_string(), true));
+    }
 }
