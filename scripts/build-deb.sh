@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.."
 
 VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -1)"
 ARCH="$(dpkg --print-architecture)"
-DEB_VERSION="${VERSION/-/~}"   # 0.2.0-dev.1 -> 0.2.0~dev.1 so a pre-release sorts before the stable release
+TILDE="~"   # kept in a variable: a literal ~ in the replacement would expand to $HOME
+DEB_VERSION="${VERSION/-/$TILDE}"   # 0.2.0-dev.1 -> 0.2.0~dev.1 so a pre-release sorts before the stable release
 NAME="winbridge_${VERSION}_${ARCH}"
 PKG="dist/$NAME"
 
