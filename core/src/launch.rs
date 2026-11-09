@@ -302,6 +302,11 @@ fn prune_logs(dir: &Path, id: &str, keep: usize, current: &Path) {
     }
 }
 
+/// Delete every log of this game (used when the game is uninstalled). Other games' logs are untouched.
+pub fn delete_logs(dir: &Path, id: &str) {
+    prune_logs(dir, id, 0, Path::new(""));
+}
+
 /// Last `n` lines of a log, for showing the user what went wrong.
 pub fn log_tail(path: &Path, n: usize) -> String {
     let text = fs::read_to_string(path).unwrap_or_default();

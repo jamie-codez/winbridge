@@ -52,6 +52,7 @@ enum Event {
 enum Action {
     Play(String),
     Remove(String),
+    Uninstall(String),
     Save(Game),
     Find(String),
     Stop(String),
@@ -421,6 +422,14 @@ impl App {
                         self.say("Removed. Save files were kept on disk in case you add the game back.", false, None)
                     }
                     Err(e) => self.say(e.to_string(), true, None),
+                }
+                self.games = self.lib.list().unwrap_or_default();
+            }
+            Action::Uninstall(id) => {
+                self.drafts.remove(&id);
+                match self.lib.remove(&id, true) {
+                    Ok(()) => self.say("Uninstalled. The game, its save files and its logs were deleted.", false, None),
+                    Err(e) => self.say(format!("Couldn't finish uninstalling: {e}"), true, None),
                 }
                 self.games = self.lib.list().unwrap_or_default();
             }
@@ -834,17 +843,29 @@ impl App {
 
                     ui.add_space(4.0);
                     if self.confirm_remove.as_deref() == Some(g.id.as_str()) {
+                        ui.label("What do you want to do with this game?");
                         ui.horizontal(|ui| {
-                            ui.label("Remove from library? (save files are kept)");
-                            if ui.button(RichText::new("Yes, remove").color(BAD)).clicked() {
+                            if ui.button("Remove from library (keep files and saves)").clicked() {
                                 actions.push(Action::Remove(g.id.clone()));
+                                self.confirm_remove = None;
+                            }
+                            if ui.button(RichText::new("Uninstall: delete game and saves").color(BAD)).clicked() {
+                                actions.push(Action::Uninstall(g.id.clone()));
                                 self.confirm_remove = None;
                             }
                             if ui.button("Cancel").clicked() {
                                 self.confirm_remove = None;
                             }
                         });
-                    } else if ui.button("Remove").clicked() {
+                        ui.label(
+                            RichText::new("Uninstall deletes the game's private Windows folder, including save files. This can't be undone.")
+                                .color(MUTED)
+                                .size(12.0),
+                        );
+                    } else if running {
+                        ui.add_enabled(false, egui::Button::new("Uninstall / Remove"))
+                            .on_disabled_hover_text("Stop the game first.");
+                    } else if ui.button("Uninstall / Remove").clicked() {
                         self.confirm_remove = Some(g.id.clone());
                     }
                 });

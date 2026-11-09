@@ -109,6 +109,8 @@ winbridge add ~/Games/Hades/Hades.exe --steam-id 1145360
 winbridge list
 winbridge run hades
 winbridge shortcut hades --desktop   # applications menu (+ desktop); --remove to undo
+winbridge remove hades                  # take it out of the library (keeps files and saves)
+winbridge remove hades --delete-data    # full uninstall: game, saves, logs and shortcuts
 winbridge controllers --watch --seconds 30   # live button test
 ```
 
