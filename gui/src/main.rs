@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::mpsc::{channel, Receiver, Sender},
     sync::{
@@ -21,6 +21,7 @@ use winbridge_core::{
     layout::Layout,
     mapping::{self, Wizard},
     setup::{self, SetupState},
+    shortcuts::{self, Dirs},
     Game, GamescopeConfig, Library,
 };
 
@@ -43,6 +44,7 @@ enum Event {
     Picked(PathBuf),
     SetupDone(Result<(), String>),
     SetupChecked(SetupState),
+    Started { id: String, pid: u32 },
     Exited { id: String, name: String, success: bool, seconds: u64, log: PathBuf },
     LaunchFailed(String),
 }
@@ -52,6 +54,7 @@ enum Action {
     Remove(String),
     Save(Game),
     Find(String),
+    Stop(String),
     UseExe(String, PathBuf),
 }
 
@@ -111,7 +114,10 @@ struct App {
     last_pad_scan: Instant,
     tools: HashSet<String>,
     page: Page,
-    running: HashSet<String>,
+    /// Games that are running now: process id (once known) and when they started.
+    running: HashMap<String, (Option<u32>, Instant)>,
+    /// Games the user pressed Stop on, so the exit isn't reported as a crash.
+    stopped: HashSet<String>,
     notice: Option<Notice>,
     confirm_remove: Option<String>,
     finder: Option<(String, Vec<PathBuf>)>,
@@ -170,7 +176,8 @@ impl App {
             last_pad_scan: Instant::now(),
             tools: HashSet::new(),
             page: Page::Library,
-            running: HashSet::new(),
+            running: HashMap::new(),
+            stopped: HashSet::new(),
             notice: None,
             confirm_remove: None,
             finder: None,
@@ -264,11 +271,30 @@ impl App {
     fn add_exe(&mut self, exe: PathBuf) {
         let name = name_from_exe(&exe);
         match self.lib.add(Game::new(&name, exe)) {
-            Ok(g) => {
-                self.say(format!("Added “{}”. Press Play to start it.", g.name), false, None);
+            Ok(mut g) => {
+                if looks_like_installer(&g) {
+                    self.say(format!("Added “{}”. Press Play to start it.", g.name), false, None);
+                } else {
+                    g.menu_shortcut = true;
+                    let _ = self.lib.save(&g);
+                    self.sync_shortcuts(&g);
+                    self.say(
+                        format!("Added “{}” and put it in your applications menu. Press Play to start it.", g.name),
+                        false,
+                        None,
+                    );
+                }
                 self.games = self.lib.list().unwrap_or_default();
             }
             Err(e) => self.say(format!("Couldn't add that file: {e}"), true, None),
+        }
+    }
+
+    /// Make the applications-menu / desktop shortcut files match the game's settings.
+    fn sync_shortcuts(&mut self, game: &Game) {
+        let dirs = Dirs::for_paths(&self.lib.paths);
+        if let Err(e) = shortcuts::sync(game, &dirs, &shortcuts::run_command()) {
+            self.say(format!("Couldn't update the shortcut: {e}"), true, None);
         }
     }
 
@@ -286,14 +312,18 @@ impl App {
             }
         };
         let (tx, ctx, paths) = (self.tx.clone(), ctx.clone(), self.lib.paths.clone());
-        self.running.insert(game.id.clone());
+        self.running.insert(game.id.clone(), (None, Instant::now()));
         self.say(
             format!("Starting {}… the first launch can take a minute while the game engine sets up.", game.name),
             false,
             None,
         );
         std::thread::spawn(move || {
-            match launch::spawn(&game, &paths, &plan).and_then(|r| r.wait()) {
+            let started = launch::spawn(&game, &paths, &plan).inspect(|r| {
+                let _ = tx.send(Event::Started { id: game.id.clone(), pid: r.pid() });
+                ctx.request_repaint();
+            });
+            match started.and_then(|r| r.wait()) {
                 Ok((info, log)) => {
                     let _ = tx.send(Event::Exited {
                         id: game.id,
@@ -342,19 +372,33 @@ impl App {
                     self.need_recheck = true;
                 }
                 Event::LaunchFailed(e) => self.say(e, true, None),
+                Event::Started { id, pid } => {
+                    if let Some(entry) = self.running.get_mut(&id) {
+                        entry.0 = Some(pid);
+                    }
+                }
                 Event::Exited { id, name, success, seconds, log } => {
                     self.running.remove(&id);
-                    if success {
-                        self.say(format!("{name} closed."), false, None);
-                    } else if seconds < 20 && !log.as_os_str().is_empty() {
-                        self.say(
-                            format!("{name} stopped right after starting. This usually means the game needs a different setting, or isn't supported on Linux (some games block it)."),
-                            true,
-                            Some(log),
-                        );
-                    } else if !log.as_os_str().is_empty() {
-                        self.say(format!("{name} closed unexpectedly."), true, Some(log));
+                    let was_stopped = self.stopped.remove(&id);
+                    // An installer just ended: look for the game it installed, so the user only has to pick it.
+                    if let Ok(g) = self.lib.get(&id) {
+                        if looks_like_installer(&g) {
+                            let found = launch::scan_installed_exes(&g.prefix(&self.lib.paths));
+                            if !found.is_empty() {
+                                self.finder = Some((id.clone(), found));
+                                self.say(
+                                    "The installer has finished. Pick the program that starts the game.".to_string(),
+                                    false,
+                                    None,
+                                );
+                                continue;
+                            }
+                        }
                     }
+                    let (text, bad) = exit_notice(&name, success, was_stopped, seconds);
+                    // Offer the log whenever something looks wrong.
+                    let log = (bad && !log.as_os_str().is_empty()).then_some(log);
+                    self.say(text, bad, log);
                 }
             }
         }
@@ -367,6 +411,7 @@ impl App {
                 if let Err(e) = self.lib.save(&g) {
                     self.say(format!("Couldn't save settings: {e}"), true, None);
                 }
+                self.sync_shortcuts(&g);
                 self.games = self.lib.list().unwrap_or_default();
             }
             Action::Remove(id) => {
@@ -378,6 +423,14 @@ impl App {
                     Err(e) => self.say(e.to_string(), true, None),
                 }
                 self.games = self.lib.list().unwrap_or_default();
+            }
+            Action::Stop(id) => {
+                if let Some((Some(pid), _)) = self.running.get(&id) {
+                    let pid = *pid;
+                    self.stopped.insert(id);
+                    self.say("Stopping… this takes a few seconds.", false, None);
+                    std::thread::spawn(move || launch::stop_group(pid));
+                }
             }
             Action::Find(id) => {
                 if let Ok(g) = self.lib.get(&id) {
@@ -397,8 +450,14 @@ impl App {
                 if let Ok(mut g) = self.lib.get(&id) {
                     g.name = name_from_exe(&exe);
                     g.exe = exe;
+                    g.menu_shortcut = true; // the installed game now shows up in the applications menu
                     let _ = self.lib.save(&g);
-                    self.say(format!("“{}” is ready. Press Play!", g.name), false, None);
+                    self.sync_shortcuts(&g);
+                    self.say(
+                        format!("“{}” is ready and is in your applications menu. Press Play!", g.name),
+                        false,
+                        None,
+                    );
                 }
                 self.games = self.lib.list().unwrap_or_default();
             }
@@ -409,6 +468,32 @@ impl App {
 fn dot(ui: &mut egui::Ui, color: Color32) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
     ui.painter().circle_filled(r.center(), 5.0, color);
+}
+
+/// A game that ends sooner than this after starting is treated as a problem even if the launcher
+/// reported success: Proton returns "success" no matter how the game itself ended.
+const EARLY_EXIT_SECONDS: u64 = 30;
+
+/// What to tell the user when a game ends, and whether it looks like something went wrong.
+fn exit_notice(name: &str, success: bool, was_stopped: bool, seconds: u64) -> (String, bool) {
+    if was_stopped {
+        return (format!("{name} was stopped."), false);
+    }
+    if seconds < EARLY_EXIT_SECONDS {
+        return (
+            format!(
+                "{name} closed by itself after {seconds} seconds. That usually means the game quit on its own: \
+                 it may need a different setting, or it may refuse to run on Linux (some copy protection does). \
+                 “Show log” has the details."
+            ),
+            true,
+        );
+    }
+    if success {
+        (format!("{name} closed."), false)
+    } else {
+        (format!("{name} closed unexpectedly."), true)
+    }
 }
 
 fn looks_like_installer(g: &Game) -> bool {
@@ -650,7 +735,7 @@ impl App {
 
         let games = self.games.clone();
         for g in games {
-            let running = self.running.contains(&g.id);
+            let running = self.running.contains_key(&g.id);
             let mut edited = g.clone();
             let mut changed = false;
             egui::Frame::new().fill(CARD).corner_radius(12).inner_margin(14).show(ui, |ui| {
@@ -662,6 +747,9 @@ impl App {
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if running {
+                            if ui.button("Stop").on_hover_text("End this game or installer completely").clicked() {
+                                actions.push(Action::Stop(g.id.clone()));
+                            }
                             ui.spinner();
                             ui.label(RichText::new("Running").color(ACCENT));
                         } else if ui
@@ -673,6 +761,13 @@ impl App {
                     });
                 });
 
+                if running && looks_like_installer(&g) {
+                    ui.label(
+                        RichText::new("Installing… When the installer says it is finished, close its window. If this still says “Running”, press Stop and WinBridge will find the installed game.")
+                            .color(MUTED)
+                            .size(12.0),
+                    );
+                }
                 if looks_like_installer(&g) {
                     ui.horizontal_wrapped(|ui| {
                         dot(ui, WARN);
@@ -686,6 +781,11 @@ impl App {
                 egui::CollapsingHeader::new("Settings").id_salt(&g.id).show(ui, |ui| {
                     changed |= ui.checkbox(&mut edited.gamemode, "Performance boost (GameMode)").changed();
                     changed |= ui.checkbox(&mut edited.mangohud, "Show FPS counter").changed();
+                    changed |= ui
+                        .checkbox(&mut edited.menu_shortcut, "Show in my applications menu")
+                        .on_hover_text("Start this game from your normal launcher, like any other app")
+                        .changed();
+                    changed |= ui.checkbox(&mut edited.desktop_shortcut, "Put a shortcut on my desktop").changed();
 
                     let has_gs = self.tools.contains("gamescope");
                     let mut limit = edited.gamescope.as_ref().and_then(|gs| gs.fps_limit).is_some();
@@ -1119,4 +1219,26 @@ fn stick(ui: &mut egui::Ui, label: &str, (x, y): (f32, f32)) {
         ui.painter().circle_filled(c + egui::vec2(x, y) * 32.0, 9.0, ACCENT);
         ui.label(RichText::new(label).size(11.0).color(MUTED));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_exit_is_a_problem_even_when_the_launcher_says_success() {
+        let (text, bad) = exit_notice("FIFA 14", true, false, 12);
+        assert!(bad && text.contains("12 seconds") && text.contains("Show log"), "{text}");
+    }
+
+    #[test]
+    fn normal_sessions_and_stops_are_not_problems() {
+        assert_eq!(exit_notice("G", true, false, 3600), ("G closed.".to_string(), false));
+        assert_eq!(exit_notice("G", true, true, 2), ("G was stopped.".to_string(), false));
+    }
+
+    #[test]
+    fn long_run_that_fails_is_unexpected() {
+        assert_eq!(exit_notice("G", false, false, 300), ("G closed unexpectedly.".to_string(), true));
+    }
 }

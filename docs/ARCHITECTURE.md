@@ -32,6 +32,7 @@ WinBridge's job is to make that stack reliable and approachable.
 | `launch` | builds the launch command (`gamescope … -- mangohud umu-run game.exe`), env vars, logs, installed-game scan |
 | `doctor` | the Health Check; every message is plain language with the exact fix |
 | `setup` | runs the embedded `install-deps.sh` (check → plan → install) |
+| `shortcuts` | applications-menu and desktop launchers (`.desktop` files that run `winbridge run <id>`); sandboxed unless WinBridge uses its real data folders |
 | `controllers` | finds gamepads from `/proc/bus/input/devices`, battery, hints, raw input events |
 | `layout` | where each button sits (standard Xbox/PlayStation tables, else saved mapping, else SDL's database) |
 | `mapping` | SDL GUID/numbering, the "Set up buttons" wizard, saved mappings |

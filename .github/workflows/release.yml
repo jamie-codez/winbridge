@@ -43,6 +43,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Check that both release branches exist
+        # semantic-release needs at least one stable branch (prod) to exist on the remote, even when
+        # releasing from dev. Without it, it fails with a confusing ERELEASEBRANCHES error.
+        run: |
+          for b in prod dev; do
+            git ls-remote --exit-code --heads origin "$b" >/dev/null || {
+              echo "::error::The '$b' branch does not exist yet. Create prod first, then dev (see docs/RELEASING.md > First-time setup)."
+              exit 1
+            }
+          done
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -83,6 +93,9 @@ jobs:
           VERSION: ${{ needs.semantic.outputs.version }}
         run: |
           cd artifacts
+          # Artifacts can keep sub-folders (the rpm one kept x86_64/); we want plain files only.
+          find . -mindepth 2 -type f -exec mv -t . {} +
+          find . -mindepth 1 -type d -empty -delete
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
           gh release upload "v$VERSION" * --clobber --repo "$GITHUB_REPOSITORY"
